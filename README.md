@@ -1,11 +1,5 @@
 # LR-SAF: A Component-Wise Audit of AFM-Style Line Segment Detection
 
-Reference code for the manuscript
-
-> **A Component-Wise Audit of AFM-Style Line Segment Detection**
-> Yang Ping, Chen Zhang, Xu Ruoyi, Chen Dongjie, Cai Jing
-> Submitted to *Pattern Recognition* (Elsevier), 2026.
-
 The paper evaluates four AFM-style components — soft top-K assignment, a 9-d
 MLP ranking head, optional semantic features, and a truncated nuclear norm
 (TNNR) regularizer — under a matched in-domain fine-tuning protocol on
