@@ -113,19 +113,28 @@ def evaluate(model, val_items, D_max=80.0, in_res=320):
 def main(epochs=20, batch=2, lr=5e-5, save_every=5,
          lam_rec=1.0, lam_tnnr=0.05, lam_junc=1.0, lam_t=0.5,
          tnn_warmup_epochs=3, seed=42, out_ckpt=None, out_log=None,
-         K=3, encoding='afm', regularizer='tnnr', lam_tv=0.0):
+         K=3, encoding='afm', regularizer='tnnr', lam_tv=0.0,
+         fold=-1, nfolds=5):
     torch.manual_seed(seed); np.random.seed(seed)
     device = 'cuda'
 
-    # Train/val split (80/22, deterministic seed)
     full_ds = YorkUrbanSubset(in_res=320, limit=None)
     print(f"YorkUrban total: {len(full_ds)} images")
-    rng = np.random.RandomState(seed)
-    perm = rng.permutation(len(full_ds))
-    n_train = 80
-    train_idx = perm[:n_train].tolist()
-    val_idx = perm[n_train:].tolist()
-    print(f"train: {len(train_idx)}, val: {len(val_idx)}")
+    if fold is not None and fold >= 0:
+        # K-fold CV: held-out test = fold (never used for training/selection),
+        # train = the other folds. Fixed cv-seed=0 partition (independent of run seed).
+        cvperm = np.random.RandomState(0).permutation(len(full_ds))
+        parts = np.array_split(cvperm, nfolds)
+        val_idx = parts[fold].tolist()
+        train_idx = np.concatenate([parts[j] for j in range(nfolds) if j != fold]).tolist()
+        print(f"[CV] fold {fold}/{nfolds}: test={len(val_idx)} train={len(train_idx)}")
+    else:
+        rng = np.random.RandomState(seed)
+        perm = rng.permutation(len(full_ds))
+        n_train = 80
+        train_idx = perm[:n_train].tolist()
+        val_idx = perm[n_train:].tolist()
+    print(f"train: {len(train_idx)}, val/test: {len(val_idx)}")
 
     train_set = torch.utils.data.Subset(full_ds, train_idx)
     train_loader = torch.utils.data.DataLoader(
@@ -217,13 +226,21 @@ def main(epochs=20, batch=2, lr=5e-5, save_every=5,
         print(f"ep {ep:02d}: train_L={mean_L:.4f} | val F={val_F:.4f} sAP10={val_sAP10:.4f} "
               f"| lam_tnnr_eff={eff_lam_tnnr:.4f} | {elapsed:.1f}s")
 
-        # Save best
-        if val_F > best_F:
+        # Save best (legacy 80/22 protocol only; never select on a CV test fold)
+        if (fold is None or fold < 0) and val_F > best_F:
             best_F = val_F
             best_path = out_ckpt or (ROOT + '/checkpoints/lr_saf_best.pth')
             os.makedirs(os.path.dirname(best_path), exist_ok=True)
             torch.save({'model': model.state_dict(), 'epoch': ep,
                         'val_F': val_F, 'val_sAP10': val_sAP10}, best_path)
+
+    if fold is not None and fold >= 0:
+        # CV: save and report the FINAL-epoch model (no test-fold selection)
+        best_path = out_ckpt or (ROOT + '/checkpoints/lr_saf_best.pth')
+        os.makedirs(os.path.dirname(best_path), exist_ok=True)
+        torch.save({'model': model.state_dict(), 'epoch': ep,
+                    'val_F': val_F, 'val_sAP10': val_sAP10}, best_path)
+        log['final_F'] = val_F; log['final_sAP10'] = val_sAP10
 
     # Save log
     log_path = out_log or (ROOT + '/logs/lr_saf_train_log.json')
@@ -259,8 +276,11 @@ if __name__ == '__main__':
     ap.add_argument('--reg', type=str, default='tnnr',
                     choices=['tnnr', 'tv', 'none'],
                     help='Regularizer applied to AFM windows.')
+    ap.add_argument('--fold', type=int, default=-1,
+                    help='K-fold CV: held-out test fold index (>=0 enables CV).')
+    ap.add_argument('--nfolds', type=int, default=5)
     args = ap.parse_args()
     main(epochs=args.epochs, batch=args.batch, lr=args.lr,
-         lam_tnnr=args.lam_tnnr, seed=args.seed,
+         lam_tnnr=args.lam_tnnr, seed=args.seed, fold=args.fold, nfolds=args.nfolds,
          out_ckpt=args.out, out_log=args.log,
          K=args.K, encoding=args.encoding, regularizer=args.reg)

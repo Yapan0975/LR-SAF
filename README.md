@@ -87,6 +87,45 @@ revision_experiments/       reviewer-driven scripts (multi-seed, AFM matched
 Multi-seed aggregation, Welch t-tests and the LaTeX table fillers live in
 `revision_experiments/`.
 
+## Reproducibility artifacts
+
+This release bundles the configurations, split files, and raw predictions
+requested during review:
+
+- **Corrected standard-metric evaluator.** `metrics.py` now computes the
+  standard dataset-level LCNN sAP via `image_records` (per-image
+  prediction / GT / score records) and `sap_dataset` (the dataset-level sAP
+  aggregation). `main_table_sap.py`, `dump_backbone_records.py`,
+  `eval_wireframe_external.py`, `train_confidence.py`, and
+  `revision_experiments/train_conf_on_afm.py` are the matching corrected
+  drivers. These supersede the earlier per-image-averaged metric.
+- **CV runner scripts** in `scripts/`: `run_cv.sh`, `run_cv_fold.sh`,
+  `run_cv_sap.sh`, `run_cv_sap_fold.sh`.
+- **Split indices and protocol** in `configs/`:
+  `cv_split.md` documents the exact 5-fold and 80/22 protocols, and
+  `cv_fold_indices.json` lists the materialised 5-fold indices.
+- **Raw predictions / results** in `predictions/`:
+  - `predictions/cv_sap/` — 20 per-image record files (per-image
+    predictions, GT, and scores) for the four conditions
+    (`afm_bb`, `lrsaf_bb`, `afm_head`, `lrsaf_head`) across folds 0-4,
+    behind the CV sAP tables.
+  - `predictions/main_table_sap.json`,
+    `predictions/wireframe_external_frozen.json`,
+    `predictions/robustness_SAPFIX.json`,
+    `predictions/tnnr_causal_SAPFIX.json` — the aggregate result JSONs.
+
+### Split protocols (summary)
+
+- **5-fold CV.** Folds are
+  `numpy.array_split(numpy.random.RandomState(0).permutation(102), 5)`
+  over the 102 YorkUrban images (fold sizes 21, 21, 20, 20, 20). One
+  fine-tune per fold; the final-epoch model is scored on the held-out fold.
+- **Main 80/22 split.** `numpy.random.RandomState(42).permutation(102)`;
+  the first 80 indices are training, the last 22 are the held-out
+  validation set.
+
+See `configs/cv_split.md` for the full description and reproduction snippets.
+
 ## Notes
 
 - All training was done on a single RTX 5090. Wireframe training took ~12 h

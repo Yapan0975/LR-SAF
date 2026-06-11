@@ -107,9 +107,15 @@ class ConfidenceMLP(nn.Module):
 
 
 def match_to_gt(pred_lines, gt_lines, H, W, threshold=10):
-    """Per-prediction binary target: 1 if matches a GT line within sAP threshold (in 128 frame).
-       Standard sAP matching (one-to-one).
-       Returns: torch tensor [N_pred] of 0/1.
+    """Per-prediction binary target: 1 if the prediction is the one-to-one
+    match to some GT line under the LCNN sAP rule (in the 128 frame).
+
+    Fixes (reviewer round 4): (i) the threshold is applied DIRECTLY to the
+    summed squared endpoint distance (sAP-10 == d2 <= 10), not to thr**2;
+    (ii) matching is genuinely one-to-one (each GT and each prediction used
+    at most once) via greedy assignment by ascending distance, so duplicate
+    predictions of the same GT are NOT all labelled positive.
+    Returns: torch tensor [N_pred] of 0/1.
     """
     if isinstance(pred_lines, np.ndarray):
         pred_lines = torch.from_numpy(pred_lines).float()
@@ -127,8 +133,23 @@ def match_to_gt(pred_lines, gt_lines, H, W, threshold=10):
     d_aa = ((p1 - g1) ** 2).sum(-1) + ((p2 - g2) ** 2).sum(-1)
     d_ab = ((p1 - g2) ** 2).sum(-1) + ((p2 - g1) ** 2).sum(-1)
     d2 = torch.minimum(d_aa, d_ab)
-    thr2 = threshold ** 2
-    matched = (d2 <= thr2).any(dim=1).float()
+
+    matched = torch.zeros(pred.shape[0])
+    if gt.shape[0] == 0 or pred.shape[0] == 0:
+        return matched
+    d2np = d2.detach().cpu().numpy()
+    thr = float(threshold)
+    flat = np.argsort(d2np, axis=None)                 # ascending distance
+    rows, cols = np.unravel_index(flat, d2np.shape)
+    pred_used = np.zeros(d2np.shape[0], dtype=bool)
+    gt_used = np.zeros(d2np.shape[1], dtype=bool)
+    for i, j in zip(rows, cols):
+        if d2np[i, j] > thr:
+            break
+        if not pred_used[i] and not gt_used[j]:
+            matched[i] = 1.0
+            pred_used[i] = True
+            gt_used[j] = True
     return matched
 
 

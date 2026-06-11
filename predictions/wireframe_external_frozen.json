@@ -1,0 +1,49 @@
+{
+  "dataset": "Wireframe test (frozen YorkUrban models, cross-dataset)",
+  "n_images": 462,
+  "ann_file": "/home/server/Documents/yping/LR-SAF-LSD/code/hawp_baseline/data/wireframe/test.json",
+  "img_dir": "/home/server/Documents/yping/LR-SAF-LSD/code/hawp_baseline/data/wireframe/images",
+  "checkpoints": {
+    "afm_bb": "/home/server/Documents/yping/LR-SAF-LSD/checkpoints/revision/cv/afm_fold0.pth",
+    "lrsaf_bb": "/home/server/Documents/yping/LR-SAF-LSD/checkpoints/revision/cv/lrsaf_fold0.pth",
+    "afm_head": "/home/server/Documents/yping/LR-SAF-LSD/checkpoints/revision/heads/afm_head_fold0.pth",
+    "lrsaf_head": "/home/server/Documents/yping/LR-SAF-LSD/checkpoints/revision/lr_saf_conf_head_seed42.pth"
+  },
+  "metric": "standard dataset-level LCNN sAP (image_records + sap_dataset), thresholds (5,10,15)",
+  "results": {
+    "afm_bb": {
+      "F": 0.7745580866401822,
+      "sAP5": 0.020415426820555638,
+      "sAP10": 0.03204995946958448,
+      "sAP15": 0.041988066560955176,
+      "n_images": 462
+    },
+    "afm_head": {
+      "F": 0.7745580866401822,
+      "sAP5": 0.1359965846045476,
+      "sAP10": 0.1853400918289226,
+      "sAP15": 0.21577635667567618,
+      "n_images": 462
+    },
+    "lrsaf_bb": {
+      "F": 0.786574308563953,
+      "sAP5": 0.0021941647822074917,
+      "sAP10": 0.008630073977599406,
+      "sAP15": 0.01589993466103412,
+      "n_images": 462
+    },
+    "lrsaf_head": {
+      "F": 0.786574308563953,
+      "sAP5": 0.016799243099956528,
+      "sAP10": 0.05532413745004636,
+      "sAP15": 0.094259411912225,
+      "n_images": 462
+    }
+  },
+  "yorkurban_indomain_cv_reference": {
+    "afm_bb": 0.043,
+    "lrsaf_bb": 0.01,
+    "afm_head": 0.122,
+    "lrsaf_head": 0.039
+  }
+}

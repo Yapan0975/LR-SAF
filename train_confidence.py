@@ -23,7 +23,7 @@ import cv2
 from data import YorkUrbanSubset
 from model import build_lr_saf
 from confidence_head import ConfidenceMLP, compute_segment_features, match_to_gt
-from metrics import s_ap, f_measure
+from metrics import s_ap, f_measure, image_records, sap_dataset
 from lib.squeeze_to_lsg import lsgenerator
 
 
@@ -43,20 +43,27 @@ def run_squeeze(model, img, in_res=320):
     return lines, offset, junc, (H_o, W_o)
 
 
-def main(epochs=10, lr=1e-3, seed=42):
+def main(epochs=10, lr=1e-3, seed=42, ckpt=None, out_json=None, fold=-1, nfolds=5):
     torch.manual_seed(seed); np.random.seed(seed)
 
-    # Reuse train/val split
     ds = YorkUrbanSubset(in_res=320)
-    rng = np.random.RandomState(seed)
-    perm = rng.permutation(len(ds))
-    train_idx, val_idx = perm[:80].tolist(), perm[80:].tolist()
+    if fold is not None and fold >= 0:
+        # K-fold CV: held-out test = fold; head trained on the rest. Matches the
+        # backbone's CV partition (cv-seed 0) so test images are unseen by both.
+        cvperm = np.random.RandomState(0).permutation(len(ds))
+        parts = np.array_split(cvperm, nfolds)
+        val_idx = parts[fold].tolist()
+        train_idx = np.concatenate([parts[j] for j in range(nfolds) if j != fold]).tolist()
+    else:
+        rng = np.random.RandomState(seed)
+        perm = rng.permutation(len(ds))
+        train_idx, val_idx = perm[:80].tolist(), perm[80:].tolist()
     items_train = [ds[i] for i in train_idx]
     items_val = [ds[i] for i in val_idx]
 
-    # Frozen LR-SAF main model
+    # Frozen LR-SAF main model (use per-seed backbone if provided)
     main_model = build_lr_saf(device='cuda').eval()
-    main_ckpt = torch.load(ROOT + '/checkpoints/lr_saf_best.pth',
+    main_ckpt = torch.load(ckpt or (ROOT + '/checkpoints/lr_saf_best.pth'),
                             map_location='cuda', weights_only=False)
     main_model.load_state_dict(main_ckpt['model'], strict=True)
     for p in main_model.parameters():
@@ -80,7 +87,7 @@ def main(epochs=10, lr=1e-3, seed=42):
         gt = item['lines'].numpy().copy()
         gt[:, 0::2] *= W_o / 320.0; gt[:, 1::2] *= H_o / 320.0
 
-        feats = compute_segment_features(kept, offset, junc, H=320, W=320)
+        feats = compute_segment_features(lines[:, :5].copy(), offset, junc, H=320, W=320)  # BUGFIX: features in 320-space (lines), not original-coord kept
         # Note: features computed in 320-coord space; pass kept (scaled) for matching
         target = match_to_gt(torch.from_numpy(kept[:, :4]).float(),
                               torch.from_numpy(gt).float(), H=H_o, W=W_o)
@@ -103,7 +110,7 @@ def main(epochs=10, lr=1e-3, seed=42):
         kept[:, 0::2] *= sx; kept[:, 1::2] *= sy
         gt = item['lines'].numpy().copy()
         gt[:, 0::2] *= W_o / 320.0; gt[:, 1::2] *= H_o / 320.0
-        feats = compute_segment_features(kept, offset, junc, H=320, W=320)
+        feats = compute_segment_features(lines[:, :5].copy(), offset, junc, H=320, W=320)  # BUGFIX: features in 320-space (lines), not original-coord kept
         target = match_to_gt(torch.from_numpy(kept[:, :4]).float(),
                               torch.from_numpy(gt).float(), H=H_o, W=W_o)
         val_data.append({'feats': feats.cuda(), 'tgt': target.cuda(),
@@ -129,36 +136,49 @@ def main(epochs=10, lr=1e-3, seed=42):
             optim.zero_grad(); loss.backward(); optim.step()
             ep_L.append(loss.item())
 
-        # Eval: re-rank predictions by learned score, compute sAP-10
+        # Eval: re-rank predictions by learned score; DATASET-LEVEL sAP
+        # (pool all images, one global PR curve) -- the standard LCNN protocol.
         head.eval()
         with torch.no_grad():
-            ap10s, ap5s = [], []
+            recs = []
             for d in val_data:
-                scores = head(d['feats']).cpu().numpy()
-                aps = s_ap(d['kept'][:, :4], scores, d['gt'],
-                            d['H_o'], d['W_o'], thresholds=(5, 10, 15))
-                ap5s.append(aps[5]); ap10s.append(aps[10])
-            ap5_m = float(np.mean(ap5s)); ap10_m = float(np.mean(ap10s))
-        print(f"  ep{ep:02d}: L={np.mean(ep_L):.4f} | val sAP5={ap5_m:.4f} sAP10={ap10_m:.4f}")
+                sc = head(d['feats']).cpu().numpy().reshape(-1)
+                r = image_records(d['kept'][:, :4], sc, d['gt'], d['H_o'], d['W_o'])
+                r['name'] = d['name']
+                recs.append(r)
+            aps = sap_dataset(recs, thresholds=(5, 10, 15))
+            ap5_m, ap10_m = aps[5], aps[10]
+        print(f"  ep{ep:02d}: L={np.mean(ep_L):.4f} | val(dataset) sAP5={ap5_m:.4f} sAP10={ap10_m:.4f}")
 
-    print("\n=== compare (val 22 images) ===")
-    # baseline: 1/aspect score
-    ap10_base = []
-    for d in val_data:
-        scores = 1.0 / (d['kept'][:, 4] + 1e-3)
-        aps = s_ap(d['kept'][:, :4], scores, d['gt'], d['H_o'], d['W_o'], thresholds=(10,))
-        ap10_base.append(aps[10])
-    print(f"  1/aspect score (baseline) sAP10: {np.mean(ap10_base):.4f}")
-    print(f"  learned confidence       sAP10: {ap10_m:.4f}")
-    print(f"  delta: {ap10_m - np.mean(ap10_base):+.4f}")
-
-    save = ROOT + '/checkpoints/lr_saf_conf_head.pth'
+    # final-epoch records for dataset-level scoring + image-resample bootstrap
+    if ckpt is None:
+        save = ROOT + '/checkpoints/lr_saf_conf_head.pth'
+    else:
+        save = ROOT + f'/checkpoints/revision/lr_saf_conf_head_seed{seed}.pth'
+        os.makedirs(os.path.dirname(save), exist_ok=True)
     torch.save({'head': head.state_dict()}, save)
-    print(f"saved {save}")
+    print(f"saved {save}; final dataset sAP-10={ap10_m:.4f}")
+
+    if out_json:
+        rec = {'seed': seed, 'ckpt': ckpt or 'lr_saf_best.pth',
+               'final_sAP10': ap10_m, 'final_sAP5': ap5_m,
+               'records': [{'name': r['name'],
+                            'pred': r['pred'].tolist(),
+                            'score': r['score'].tolist(),
+                            'gt': r['gt'].tolist()} for r in recs]}
+        with open(out_json, 'w') as fh:
+            json.dump(rec, fh)
+        print(f"saved {out_json}")
 
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser()
     ap.add_argument('--epochs', type=int, default=15)
+    ap.add_argument('--seed', type=int, default=42)
+    ap.add_argument('--ckpt', type=str, default=None)
+    ap.add_argument('--out_json', type=str, default=None)
+    ap.add_argument('--fold', type=int, default=-1)
+    ap.add_argument('--nfolds', type=int, default=5)
     args = ap.parse_args()
-    main(epochs=args.epochs)
+    main(epochs=args.epochs, seed=args.seed, ckpt=args.ckpt, out_json=args.out_json,
+         fold=args.fold, nfolds=args.nfolds)

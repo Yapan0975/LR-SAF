@@ -39,7 +39,7 @@ from model import build_lr_saf
 from confidence_head import ConfidenceMLP, compute_segment_features, match_to_gt
 from train_confidence_semantic import SemanticConfMLP
 from semantic_features import SemanticExtractor, sample_along_line
-from metrics import f_measure, s_ap
+from metrics import f_measure, s_ap, image_records, sap_dataset
 
 IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
@@ -101,8 +101,10 @@ def infer_lrsaf(model, sem_ext, img):
 
 
 def score_and_eval(lines, scores, gt, H_o, W_o, ds_in_res=320):
+    """Return (F-measure, per-image record). F stays per-image (its convention);
+    sAP is accumulated as records and scored DATASET-LEVEL by the caller."""
     if len(lines) == 0:
-        return 0.0, {5: 0.0, 10: 0.0, 15: 0.0}
+        return 0.0, image_records(np.zeros((0, 4), np.float32), np.zeros(0, np.float32), gt, H_o, W_o)
     sx, sy = W_o / ds_in_res, H_o / ds_in_res
     kept = lines[:, :4].copy()
     kept[:, 0::2] *= sx; kept[:, 1::2] *= sy
@@ -111,8 +113,8 @@ def score_and_eval(lines, scores, gt, H_o, W_o, ds_in_res=320):
     kp = kept.copy(); kp[:, 0::2] /= DS; kp[:, 1::2] /= DS
     gp = gt.copy(); gp[:, 0::2] /= DS; gp[:, 1::2] /= DS
     fm = f_measure(kp, gp, H_ds, W_ds)
-    aps = s_ap(kept, scores, gt, H_o, W_o, thresholds=(5, 10, 15))
-    return fm['F'], aps
+    rec = image_records(kept, np.asarray(scores).reshape(-1), gt, H_o, W_o)
+    return fm['F'], rec
 
 
 def main(seed=42):
@@ -173,47 +175,38 @@ def main(seed=42):
         results[kind] = []
         for lvl in levels:
             print(f"  level={lvl}", end=' ', flush=True)
-            f_afm, ap_afm, f_lrs, ap_lrs, f_sem, ap_sem = [], [], [], [], [], []
+            f_afm, rec_afm, f_lrs, rec_lrs, f_sem, rec_sem = [], [], [], [], [], []
             t0 = time.time()
             for item in val_items:
                 img_orig = cv2.imread(os.path.join(item['root'], item['name'],
                                                     f"{item['name']}.jpg"))
                 img_d = apply_degradation(img_orig, kind, lvl)
-                # 1. AFM baseline
+                # 1. AFM baseline (1/aspect score)
                 lines_a, H_o, W_o = infer_afm(afm_model, img_d)
                 scores_a = (1.0 / (lines_a[:, 4] + 1e-3)
-                            if lines_a.shape[1] >= 5 else np.ones(len(lines_a)))
-                f1, ap1 = score_and_eval(lines_a, scores_a, item['gt_orig'], H_o, W_o)
-                f_afm.append(f1); ap_afm.append(ap1[10])
+                            if len(lines_a) and lines_a.shape[1] >= 5 else np.ones(len(lines_a)))
+                f1, r1 = score_and_eval(lines_a, scores_a, item['gt_orig'], H_o, W_o)
+                f_afm.append(f1); rec_afm.append(r1)
 
                 # 2. LR-SAF + geom-only confidence
-                lines_l, geom, sem, H_o, W_o = infer_lrsaf(lrsaf_model,
-                                                            sem_ext, img_d)
-                if len(lines_l) > 0:
-                    with torch.no_grad():
-                        sc_g = geom_head(geom).cpu().numpy()
-                    f2, ap2 = score_and_eval(lines_l, sc_g, item['gt_orig'], H_o, W_o)
-                else:
-                    f2, ap2 = 0.0, {10: 0.0}
-                f_lrs.append(f2); ap_lrs.append(ap2[10])
+                lines_l, geom, sem, H_o, W_o = infer_lrsaf(lrsaf_model, sem_ext, img_d)
+                sc_g = geom_head(geom).detach().cpu().numpy() if len(lines_l) else np.zeros(0)
+                f2, r2 = score_and_eval(lines_l, sc_g, item['gt_orig'], H_o, W_o)
+                f_lrs.append(f2); rec_lrs.append(r2)
 
                 # 3. LR-SAF + semantic
-                if len(lines_l) > 0:
-                    with torch.no_grad():
-                        sc_s = sem_head(geom, sem).cpu().numpy()
-                    f3, ap3 = score_and_eval(lines_l, sc_s, item['gt_orig'], H_o, W_o)
-                else:
-                    f3, ap3 = 0.0, {10: 0.0}
-                f_sem.append(f3); ap_sem.append(ap3[10])
+                sc_s = sem_head(geom, sem).detach().cpu().numpy() if len(lines_l) else np.zeros(0)
+                f3, r3 = score_and_eval(lines_l, sc_s, item['gt_orig'], H_o, W_o)
+                f_sem.append(f3); rec_sem.append(r3)
 
             row = {
                 'level': lvl,
                 'F_afm':     float(np.mean(f_afm)),
                 'F_lrsaf':   float(np.mean(f_lrs)),
                 'F_lrsaf_s': float(np.mean(f_sem)),
-                'sAP10_afm':     float(np.mean(ap_afm)),
-                'sAP10_lrsaf':   float(np.mean(ap_lrs)),
-                'sAP10_lrsaf_s': float(np.mean(ap_sem)),
+                'sAP10_afm':     sap_dataset(rec_afm, (10,))[10],
+                'sAP10_lrsaf':   sap_dataset(rec_lrs, (10,))[10],
+                'sAP10_lrsaf_s': sap_dataset(rec_sem, (10,))[10],
             }
             results[kind].append(row)
             print(f"-> F: AFM={row['F_afm']:.3f} LR={row['F_lrsaf']:.3f} "

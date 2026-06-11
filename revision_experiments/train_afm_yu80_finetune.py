@@ -104,15 +104,26 @@ def main():
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--out", required=True)
     ap.add_argument("--log", required=True)
+    ap.add_argument("--fold", type=int, default=-1,
+                    help="K-fold CV: held-out test fold (>=0 enables CV).")
+    ap.add_argument("--nfolds", type=int, default=5)
     args = ap.parse_args()
 
     torch.manual_seed(args.seed); np.random.seed(args.seed)
     device = "cuda"
 
     full_ds = YorkUrbanSubset(in_res=320, limit=None)
-    rng = np.random.RandomState(args.seed)
-    perm = rng.permutation(len(full_ds))
-    train_idx, val_idx = perm[:80].tolist(), perm[80:].tolist()
+    if args.fold is not None and args.fold >= 0:
+        cvperm = np.random.RandomState(0).permutation(len(full_ds))
+        parts = np.array_split(cvperm, args.nfolds)
+        val_idx = parts[args.fold].tolist()
+        train_idx = np.concatenate([parts[j] for j in range(args.nfolds)
+                                    if j != args.fold]).tolist()
+        print(f"[CV] fold {args.fold}/{args.nfolds}: test={len(val_idx)} train={len(train_idx)}")
+    else:
+        rng = np.random.RandomState(args.seed)
+        perm = rng.permutation(len(full_ds))
+        train_idx, val_idx = perm[:80].tolist(), perm[80:].tolist()
 
     train_set = torch.utils.data.Subset(full_ds, train_idx)
     train_loader = torch.utils.data.DataLoader(
@@ -168,11 +179,20 @@ def main():
         log["val_F"].append(F_val); log["val_sAP10"].append(sAP10_val); log["epochs"].append(ep)
         print(f"ep {ep:02d}: train_L={log['train_loss'][-1]:.4f} | val F={F_val:.4f} sAP10={sAP10_val:.4f} | {elapsed:.1f}s")
 
-        if F_val > best_F:
+        # In CV mode, do NOT select on the held-out test fold; keep best-F
+        # selection only for the legacy 80/22 protocol.
+        if (args.fold is None or args.fold < 0) and F_val > best_F:
             best_F = F_val
             os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
             torch.save({"model": model.state_dict(), "epoch": ep,
                         "val_F": F_val, "val_sAP10": sAP10_val}, args.out)
+
+    if args.fold is not None and args.fold >= 0:
+        # CV: save and report the FINAL-epoch model (no test-fold selection)
+        os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
+        torch.save({"model": model.state_dict(), "epoch": ep,
+                    "val_F": F_val, "val_sAP10": sAP10_val}, args.out)
+        log["final_F"] = F_val; log["final_sAP10"] = sAP10_val
 
     with open(args.log, "w") as fh:
         json.dump(log, fh, indent=2)

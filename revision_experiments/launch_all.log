@@ -1,0 +1,19 @@
+=== Paper 1 Major Rev batch driver started 2026-06-02T06:34:00+08:00 ===
+[exp-c] launching seed=42 at 2026-06-02T06:34:00+08:00
+[exp-c] seed=42 rc=0 at 2026-06-02T06:45:53+08:00
+AFM baseline (paper):       F=0.646
+AFM baseline (our YorkUrban full eval): F=0.7351, sAP10=0.1608
+LR-SAF on val (80/22):     best F=0.7694, final sAP10=0.1242
+[exp-c] launching seed=17 at 2026-06-02T06:45:53+08:00
+[exp-c] seed=17 rc=0 at 2026-06-02T06:57:52+08:00
+AFM baseline (paper):       F=0.646
+AFM baseline (our YorkUrban full eval): F=0.7351, sAP10=0.1608
+LR-SAF on val (80/22):     best F=0.7865, final sAP10=0.1193
+[exp-c] launching seed=2024 at 2026-06-02T06:57:52+08:00
+[exp-c] seed=2024 rc=0 at 2026-06-02T07:11:56+08:00
+AFM baseline (paper):       F=0.646
+AFM baseline (our YorkUrban full eval): F=0.7351, sAP10=0.1608
+LR-SAF on val (80/22):     best F=0.7790, final sAP10=0.1205
+[aggregate] computing mean ± std across seeds
+No files match 'logs/revision/train_seed*.json'
+=== Batch driver done at 2026-06-02T07:11:56+08:00, elapsed 2276s ===
