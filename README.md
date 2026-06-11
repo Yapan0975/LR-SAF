@@ -73,7 +73,7 @@ revision_experiments/       reviewer-driven scripts (multi-seed, AFM matched
    bash revision_experiments/exp_c_multiseed_yu80.sh
    python revision_experiments/aggregate_multiseed.py
    ```
-5. **Confidence head on matched AFM (Table 13).**
+5. **Confidence head on matched AFM (paired backbone-vs-head comparison).**
    ```bash
    bash revision_experiments/afm_head_multiseed.sh
    python revision_experiments/aggregate_afm_multiseed.py
@@ -83,14 +83,15 @@ revision_experiments/       reviewer-driven scripts (multi-seed, AFM matched
    python robustness_4way.py
    python plot_robustness.py
    ```
-7. **TNNR causal ablation (Table 6) + TV comparison (Table 9).**
+7. **TNNR causal ablation and TV comparison.**
    ```bash
    bash revision_experiments/rev9_experiments.sh
    python revision_experiments/rev9_aggregate.py
    ```
 
-Multi-seed aggregation, Welch t-tests and the LaTeX table fillers live in
-`revision_experiments/`.
+Cross-validation aggregation, the paired-difference and image-resample
+bootstrap analysis, and the LaTeX table fillers live in
+`revision_experiments/` and `scripts/`.
 
 ## Reproducibility artifacts
 
