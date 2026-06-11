@@ -21,7 +21,7 @@ from model import build_lr_saf
 from confidence_head import ConfidenceMLP, compute_segment_features
 from train_confidence_semantic import SemanticConfMLP
 from semantic_features import SemanticExtractor, sample_along_line
-from metrics import s_ap
+from metrics import s_ap, image_records, sap_dataset
 
 MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
@@ -75,13 +75,14 @@ def infer_lrsaf(model, sem_ext, img, use_sem=False):
     return lines, geom, sem, H_o, W_o
 
 
-def score(lines, scores, gt, H_o, W_o):
+def rec(lines, scores, gt, H_o, W_o):
+    """Per-image record (128-frame) for DATASET-LEVEL sAP (standard LCNN)."""
     if len(lines) == 0:
-        return 0.0
+        return image_records(np.zeros((0, 4), np.float32), np.zeros(0, np.float32),
+                             gt, H_o, W_o)
     sx, sy = W_o / 320.0, H_o / 320.0
     kept = lines[:, :4].copy(); kept[:, 0::2] *= sx; kept[:, 1::2] *= sy
-    aps = s_ap(kept, scores, gt, H_o, W_o, thresholds=(10,))
-    return aps[10]
+    return image_records(kept, np.asarray(scores).reshape(-1), gt, H_o, W_o)
 
 
 def main(seed=42):
@@ -133,43 +134,28 @@ def main(seed=42):
                 img = cv2.imread(os.path.join(item['root'], item['name'],
                                                 f"{item['name']}.jpg"))
                 img_d = apply_deg(img, kind, lvl) if kind else img
-                # 1. AFM
+                # 1. AFM (1/aspect score)
                 lines_a, H_o, W_o = infer_afm(afm, img_d)
-                if len(lines_a) > 0:
-                    sc = (1.0 / (lines_a[:, 4] + 1e-3) if lines_a.shape[1] >= 5
-                          else np.ones(len(lines_a)))
-                    agg['afm'].append(score(lines_a, sc, item['gt'], H_o, W_o))
-                else:
-                    agg['afm'].append(0)
+                sc = (1.0 / (lines_a[:, 4] + 1e-3) if len(lines_a) and lines_a.shape[1] >= 5
+                      else np.ones(len(lines_a)))
+                agg['afm'].append(rec(lines_a, sc, item['gt'], H_o, W_o))
                 # 2. LR-SAF no TNNR + geom head
                 lines_n, geom_n, _, _, _ = infer_lrsaf(notnnr, None, img_d, use_sem=False)
-                if len(lines_n) > 0:
-                    with torch.no_grad():
-                        sc_n = geom_head(geom_n).cpu().numpy()
-                    agg['notnnr_g'].append(score(lines_n, sc_n, item['gt'], H_o, W_o))
-                else:
-                    agg['notnnr_g'].append(0)
+                sc_n = (geom_head(geom_n).detach().cpu().numpy() if len(lines_n) else None)
+                agg['notnnr_g'].append(rec(lines_n, sc_n, item['gt'], H_o, W_o))
                 # 3. LR-SAF full + geom head
                 lines_f, geom_f, _, _, _ = infer_lrsaf(full, None, img_d, use_sem=False)
-                if len(lines_f) > 0:
-                    with torch.no_grad():
-                        sc_f = geom_head(geom_f).cpu().numpy()
-                    agg['full_g'].append(score(lines_f, sc_f, item['gt'], H_o, W_o))
-                else:
-                    agg['full_g'].append(0)
+                sc_f = (geom_head(geom_f).detach().cpu().numpy() if len(lines_f) else None)
+                agg['full_g'].append(rec(lines_f, sc_f, item['gt'], H_o, W_o))
                 # 4. LR-SAF full + sem head
                 lines_s, geom_s, sem_s, _, _ = infer_lrsaf(full, sem_ext, img_d, use_sem=True)
-                if len(lines_s) > 0:
-                    with torch.no_grad():
-                        sc_s = sem_head(geom_s, sem_s).cpu().numpy()
-                    agg['full_sem'].append(score(lines_s, sc_s, item['gt'], H_o, W_o))
-                else:
-                    agg['full_sem'].append(0)
+                sc_s = (sem_head(geom_s, sem_s).detach().cpu().numpy() if len(lines_s) else None)
+                agg['full_sem'].append(rec(lines_s, sc_s, item['gt'], H_o, W_o))
             row = {'category': category, 'level': lvl,
-                   'afm':       float(np.mean(agg['afm'])),
-                   'notnnr_g':  float(np.mean(agg['notnnr_g'])),
-                   'full_g':    float(np.mean(agg['full_g'])),
-                   'full_sem':  float(np.mean(agg['full_sem']))}
+                   'afm':       sap_dataset(agg['afm'], (10,))[10],
+                   'notnnr_g':  sap_dataset(agg['notnnr_g'], (10,))[10],
+                   'full_g':    sap_dataset(agg['full_g'], (10,))[10],
+                   'full_sem':  sap_dataset(agg['full_sem'], (10,))[10]}
             results.append(row)
             print(f"-> AFM={row['afm']:.3f} noTNNR={row['notnnr_g']:.3f} "
                   f"full={row['full_g']:.3f} +sem={row['full_sem']:.3f}")

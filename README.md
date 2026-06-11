@@ -3,15 +3,26 @@
 The paper evaluates four AFM-style components — soft top-K assignment, a 9-d
 MLP ranking head, optional semantic features, and a truncated nuclear norm
 (TNNR) regularizer — under a matched in-domain fine-tuning protocol on
-YorkUrban. The audit produces three findings:
+YorkUrban. After re-scoring every condition with the standard dataset-level
+LCNN sAP evaluator (the earlier draft used a more lenient per-image-averaged
+metric), the audit is a diagnostic negative-result audit: under the corrected
+metric the proposed components do not deliver a net gain over the AFM baseline.
+The findings are:
 
-1. The soft-assignment backbone gives a small seed-consistent F-measure gain
-   over AFM (0.7783 ± 0.0086 vs. 0.7645 ± 0.0108) but does not improve sAP-10.
-2. The 9-d MLP ranking head accounts for most of the reported sAP-10
-   improvement; on a matched AFM backbone the same head reaches 0.356 ± 0.014.
-3. TNNR contributes only +0.007 mean sAP-10 under degradation and is
-   empirically indistinguishable from a total-variation regularizer at the
-   same scheduled weight.
+1. Under 5-fold held-out CV (standard dataset-level LCNN sAP-10), the
+   soft-assignment LR-SAF backbone scores *below* the AFM backbone
+   (0.010 ± 0.003 vs. AFM 0.043 ± 0.014). Adding the 9-d MLP geometry head
+   raises both, but LR-SAF+head (0.039 ± 0.006 fold-wise, 0.037 pooled) still
+   trails AFM+head (0.122 ± 0.023 fold-wise, 0.115 pooled). The paired
+   difference favours AFM by +0.078 sAP-10 (95% bootstrap CI
+   [+0.064, +0.095]).
+2. The 9-d MLP ranking head, not the backbone, accounts for the bulk of any
+   sAP-10 movement; it helps the matched AFM backbone more than the LR-SAF
+   one. On a frozen external Wireframe test the same ordering holds
+   (AFM+head 0.185 vs. LR-SAF+head 0.055 sAP-10).
+3. The TNNR regularizer has a negligible isolated effect: mean Δ = +0.002
+   sAP-10 (range [−0.001, +0.006]) and is empirically indistinguishable from a
+   total-variation regularizer at the same scheduled weight.
 
 ## Code organization
 
@@ -45,10 +56,10 @@ revision_experiments/       reviewer-driven scripts (multi-seed, AFM matched
                             fine-tune, TV-regularizer comparison, etc.)
 ```
 
-## Reproducing the headline numbers
+## Reproducing the standard-metric numbers
 
-1. **Environment.** Python 3.10, PyTorch 2.2, CUDA 12.1. See `requirements.txt`
-   (TODO).
+1. **Environment.** Python 3.10, PyTorch 2.2, CUDA 12.1. Install the Python
+   dependencies with `pip install -r requirements.txt`.
 2. **Data.** YorkUrban (102 images) and Wireframe (5000 images). The repo
    does not ship data; symlink the original releases into a local `data/`
    directory.
@@ -57,7 +68,7 @@ revision_experiments/       reviewer-driven scripts (multi-seed, AFM matched
    python eval_afm_full.py --dataset yorkurban
    bash revision_experiments/afm_multiseed.sh
    ```
-4. **LR-SAF backbone (3-seed).**
+4. **LR-SAF backbone.**
    ```bash
    bash revision_experiments/exp_c_multiseed_yu80.sh
    python revision_experiments/aggregate_multiseed.py
@@ -81,15 +92,59 @@ revision_experiments/       reviewer-driven scripts (multi-seed, AFM matched
 Multi-seed aggregation, Welch t-tests and the LaTeX table fillers live in
 `revision_experiments/`.
 
+## Reproducibility artifacts
+
+This release bundles the configurations, split files, and raw predictions
+requested during review:
+
+- **Corrected standard-metric evaluator.** `metrics.py` now computes the
+  standard dataset-level LCNN sAP via `image_records` (per-image
+  prediction / GT / score records) and `sap_dataset` (the dataset-level sAP
+  aggregation). `main_table_sap.py`, `dump_backbone_records.py`,
+  `eval_wireframe_external.py`, `train_confidence.py`, and
+  `revision_experiments/train_conf_on_afm.py` are the matching corrected
+  drivers. These supersede the earlier per-image-averaged metric.
+- **CV runner scripts** in `scripts/`: `run_cv.sh`, `run_cv_fold.sh`,
+  `run_cv_sap.sh`, `run_cv_sap_fold.sh`.
+- **Split indices and protocol** in `configs/`:
+  `cv_split.md` documents the exact 5-fold and 80/22 protocols, and
+  `cv_fold_indices.json` lists the materialised 5-fold indices.
+- **Raw predictions / results** in `predictions/`:
+  - `predictions/cv_sap/` — 20 per-image record files (per-image
+    predictions, GT, and scores) for the four conditions
+    (`afm_bb`, `lrsaf_bb`, `afm_head`, `lrsaf_head`) across folds 0-4,
+    behind the CV sAP tables.
+  - `predictions/main_table_sap.json`,
+    `predictions/wireframe_external_frozen.json`,
+    `predictions/robustness_SAPFIX.json`,
+    `predictions/tnnr_causal_SAPFIX.json` — the aggregate result JSONs.
+
+### Split protocols (summary)
+
+- **5-fold CV.** Folds are
+  `numpy.array_split(numpy.random.RandomState(0).permutation(102), 5)`
+  over the 102 YorkUrban images (fold sizes 21, 21, 20, 20, 20). One
+  fine-tune per fold; the final-epoch model is scored on the held-out fold.
+- **Main 80/22 split.** `numpy.random.RandomState(42).permutation(102)`;
+  the first 80 indices are training, the last 22 are the held-out
+  validation set.
+
+See `configs/cv_split.md` for the full description and reproduction snippets.
+
 ## Notes
 
 - All training was done on a single RTX 5090. Wireframe training took ~12 h
   per seed for the full 50 epochs.
 - The DINOv2 feature head was evaluated as an alternative to VOC-21 semantics
   but did not improve on small-data conditions.
-- TNNR (truncated nuclear norm with adaptive rank `r(W) = 2·K(W)`) is
-  implemented in `tnn_loss.py`; the DC decomposition makes the term
-  amenable to standard non-convex SGD/Adam.
+- TNNR (truncated nuclear norm with adaptive rank
+  `r(W) = 1 + floor((K_max − 1) · s(W))`, `K_max = 3`, where `s(W)` is the
+  per-window junction strength) is implemented in `tnn_loss.py`; the DC
+  decomposition makes the term amenable to standard non-convex SGD/Adam.
+  Note that in the trained model the predicted junction strength `s(W)` never
+  crosses the 0.5 threshold, so the rule degenerates to `r = 1` for every
+  window — the adaptive rank is effectively a fixed rank-1 nuclear-norm
+  penalty in practice.
 
 ## Citation
 

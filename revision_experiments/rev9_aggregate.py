@@ -21,8 +21,8 @@ def main():
         print(f"  seed={seed}: best F={bF:.4f}  sAP10={bA:.4f}")
     if rows:
         Fs = [r[1] for r in rows]; As = [r[2] for r in rows]
-        print(f"  mean: F={statistics.fmean(Fs):.4f} ± {statistics.stdev(Fs) if len(Fs)>1 else 0:.4f}, "
-              f"sAP10={statistics.fmean(As):.4f} ± {statistics.stdev(As) if len(As)>1 else 0:.4f}")
+        print(f"  mean: F={statistics.fmean(Fs):.4f} ? {statistics.stdev(Fs) if len(Fs)>1 else 0:.4f}, "
+              f"sAP10={statistics.fmean(As):.4f} ? {statistics.stdev(As) if len(As)>1 else 0:.4f}")
 
     print("\n=== EXP-C LR-SAF (with TNNR) multi-seed ===")
     files = sorted(glob.glob("logs/revision/train_seed*.json"))
@@ -34,10 +34,10 @@ def main():
         print(f"  seed={seed}: best F={bF:.4f}  sAP10={bA:.4f}")
     if lr_rows:
         Fs = [r[1] for r in lr_rows]; As = [r[2] for r in lr_rows]
-        print(f"  mean: F={statistics.fmean(Fs):.4f} ± {statistics.stdev(Fs) if len(Fs)>1 else 0:.4f}, "
-              f"sAP10={statistics.fmean(As):.4f} ± {statistics.stdev(As) if len(As)>1 else 0:.4f}")
+        print(f"  mean: F={statistics.fmean(Fs):.4f} ? {statistics.stdev(Fs) if len(Fs)>1 else 0:.4f}, "
+              f"sAP10={statistics.fmean(As):.4f} ? {statistics.stdev(As) if len(As)>1 else 0:.4f}")
 
-    print("\n=== Δ_TNNR_backbone (per-seed paired) ===")
+    print("\n=== ?_TNNR_backbone (per-seed paired) ===")
     by_seed_no = {s: (F, A) for s, F, A in rows}
     by_seed_lr = {s: (F, A) for s, F, A in lr_rows}
     deltas = []
@@ -46,11 +46,11 @@ def main():
         dF = by_seed_lr[s][0] - by_seed_no[s][0]
         dA = by_seed_lr[s][1] - by_seed_no[s][1]
         deltas.append((s, dF, dA))
-        print(f"  seed={s}: ΔF (LR-SAF − no-TNNR) = {dF:+.4f}, ΔsAP10 = {dA:+.4f}")
+        print(f"  seed={s}: ?F (LR-SAF ??no-TNNR) = {dF:+.4f}, ?sAP10 = {dA:+.4f}")
     if deltas:
         dFs = [d[1] for d in deltas]; dAs = [d[2] for d in deltas]
-        print(f"  mean ΔF   = {statistics.fmean(dFs):+.4f} ± {statistics.stdev(dFs) if len(dFs)>1 else 0:.4f}")
-        print(f"  mean ΔsAP = {statistics.fmean(dAs):+.4f} ± {statistics.stdev(dAs) if len(dAs)>1 else 0:.4f}")
+        print(f"  mean ?F   = {statistics.fmean(dFs):+.4f} ? {statistics.stdev(dFs) if len(dFs)>1 else 0:.4f}")
+        print(f"  mean ?sAP = {statistics.fmean(dAs):+.4f} ? {statistics.stdev(dAs) if len(dAs)>1 else 0:.4f}")
 
     print("\n=== v9 (K=1 + bounded encoding, seed 42) ===")
     for f in sorted(glob.glob("logs/revision/v9_*.json")):

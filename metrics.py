@@ -131,13 +131,16 @@ def s_ap(pred_lines, scores, gt_lines, H, W, thresholds=(5, 10, 15)):
 
     results = {}
     for thr in thresholds:
-        thr2 = thr ** 2
+        # LCNN/HAWP sAP: threshold is applied DIRECTLY to the summed squared
+        # endpoint distance d2 (NOT thr**2). sAP-10 == d2 <= 10.
         gt_used = np.zeros(len(gt_n), dtype=bool)
         tp = np.zeros(len(pred_n), dtype=np.float32)
         fp = np.zeros(len(pred_n), dtype=np.float32)
         for i in range(len(pred_n)):
-            j = np.argmin(d2[i])
-            if d2[i, j] <= thr2 and not gt_used[j]:
+            # one-to-one greedy: assign to the nearest still-unused GT within thr
+            cand = np.where((d2[i] <= thr) & (~gt_used))[0]
+            if len(cand) > 0:
+                j = cand[np.argmin(d2[i, cand])]
                 tp[i] = 1.0
                 gt_used[j] = True
             else:
@@ -165,9 +168,73 @@ def s_ap(pred_lines, scores, gt_lines, H, W, thresholds=(5, 10, 15)):
 
 
 def msap(pred_lines, scores, gt_lines, H, W):
-    """mean sAP over thresholds 5, 10, 15."""
+    """mean sAP over thresholds 5, 10, 15 (per-image; prefer sap_dataset)."""
     aps = s_ap(pred_lines, scores, gt_lines, H, W, thresholds=(5, 10, 15))
     return sum(aps.values()) / len(aps), aps
+
+
+def image_records(pred_lines, scores, gt_lines, H, W):
+    """Return a per-image record for dataset-level sAP: predictions and GT
+    normalized to the 128 frame, plus scores. Use with sap_dataset()."""
+    pred_lines = np.asarray(pred_lines, dtype=np.float32)
+    gt_lines = np.asarray(gt_lines, dtype=np.float32)
+    rec = {'pred': normalize_to_128(pred_lines, H, W) if len(pred_lines) else
+                   np.zeros((0, 4), np.float32),
+           'score': np.asarray(scores, dtype=np.float32).reshape(-1),
+           'gt': normalize_to_128(gt_lines, H, W) if len(gt_lines) else
+                 np.zeros((0, 4), np.float32)}
+    return rec
+
+
+def sap_dataset(records, thresholds=(5, 10, 15)):
+    """Dataset-level structural AP (the standard LCNN/HAWP protocol).
+
+    records: list of per-image dicts from image_records() (pred/gt in the
+    128 frame, score per prediction). All predictions across all images are
+    pooled, sorted once by global confidence, and a single PR curve / AP is
+    computed per threshold. Matching is one-to-one greedy within each image
+    (each GT matched at most once), threshold applied to the summed squared
+    endpoint distance. Returns {threshold -> AP}.
+    """
+    n_gt_total = int(sum(len(r['gt']) for r in records))
+    out = {}
+    for thr in thresholds:
+        scores_all, tp_all = [], []
+        for r in records:
+            pred, score, gt = r['pred'], r['score'], r['gt']
+            if len(pred) == 0:
+                continue
+            order = np.argsort(-score)
+            pred_s = pred[order]
+            score_s = score[order]
+            if len(gt) == 0:
+                scores_all.append(score_s)
+                tp_all.append(np.zeros(len(pred_s), np.float32))
+                continue
+            d2 = pairwise_segment_dist_sq(pred_s, gt)   # [N, M]
+            gt_used = np.zeros(len(gt), dtype=bool)
+            tp = np.zeros(len(pred_s), np.float32)
+            for i in range(len(pred_s)):
+                cand = np.where((d2[i] <= thr) & (~gt_used))[0]
+                if len(cand) > 0:
+                    gt_used[cand[np.argmin(d2[i, cand])]] = True
+                    tp[i] = 1.0
+            scores_all.append(score_s)
+            tp_all.append(tp)
+        if not scores_all:
+            out[thr] = 0.0
+            continue
+        scores_all = np.concatenate(scores_all)
+        tp_all = np.concatenate(tp_all)
+        idx = np.argsort(-scores_all)
+        tp_cum = np.cumsum(tp_all[idx])
+        fp_cum = np.cumsum(1.0 - tp_all[idx])
+        recall = tp_cum / max(n_gt_total, 1)
+        precision = tp_cum / np.maximum(tp_cum + fp_cum, 1e-12)
+        prec_env = np.maximum.accumulate(precision[::-1])[::-1]
+        rec_diff = np.diff(np.concatenate([[0.0], recall]))
+        out[thr] = float((rec_diff * prec_env).sum())
+    return out
 
 
 # -----------------------------------------------------------------------------

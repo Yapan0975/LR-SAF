@@ -1,4 +1,4 @@
-"""Aggregate AFM YU-80 fine-tune across seeds {42, 17, 2024}."""
+﻿"""Aggregate AFM YU-80 fine-tune across seeds {42, 17, 2024}."""
 import argparse, glob, json, statistics, sys, re
 
 
@@ -36,7 +36,7 @@ def main():
         json.dump(out, fh, indent=2)
     print(f"AFM YU-80 fine-tune across {len(rows)} seeds:")
     for k, v in summary.items():
-        print(f"  {k:18s}: {v['mean']:.4f} ± {v['std']:.4f}   values={[f'{x:.4f}' for x in v['values']]}")
+        print(f"  {k:18s}: {v['mean']:.4f} ? {v['std']:.4f}   values={[f'{x:.4f}' for x in v['values']]}")
 
 
 if __name__ == "__main__":
