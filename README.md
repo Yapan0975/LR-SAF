@@ -96,14 +96,6 @@ Multi-seed aggregation, Welch t-tests and the LaTeX table fillers live in
 If you use this code, please cite the manuscript (final reference will be
 updated upon acceptance).
 
-```bibtex
-@article{lrsaf2026,
-  title={A Component-Wise Audit of AFM-Style Line Segment Detection},
-  author={Yang, Ping and Chen, Zhang and Xu, Ruoyi and Chen, Dongjie and Cai, Jing},
-  journal={Pattern Recognition (under review)},
-  year={2026}
-}
-```
 
 ## License
 
