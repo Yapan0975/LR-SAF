@@ -1,4 +1,4 @@
-# LR-SAF: A Component-wise Analysis of AFM-Style Line Segment Detection
+# LR-SAF: A Controlled Component Attribution Study of AFM-Style Line Segment Detection
 
 The paper evaluates four AFM-style components — soft top-K assignment, a 9-d
 MLP ranking head, optional semantic features, and a truncated nuclear norm
